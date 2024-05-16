@@ -1,0 +1,15 @@
+let x be 10
+
+print x
+
+let server be an element
+  member visit_count is an integer
+
+  on get as Request ["hello"]
+    increment the visit_count
+    respond with the html "Hello world to the ${visit_count} visitor!"
+  on get as Request ["hello", name]
+    increment the visit_count
+    respond with the html "Hello ${name}!"
+end
+start the server on port 3000
