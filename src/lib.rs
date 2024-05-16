@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::Write;
+use std::ptr::NonNull;
 
 #[derive(Debug, PartialEq)]
 pub enum Token<'a> {
@@ -46,21 +47,54 @@ impl<'a> Iterator for Tokenizer<'a> {
     }
 }
 
+/// This type represents how values are represented within the virtual machine
+///
+/// Because this language is statically typed, we do not need to keep track of type tags
+type Value = u64;
+
+pub fn str_to_val(val: &&str) -> Value {
+   (val as *const &str) as Value
+}
 type Word = fn(&VM);
 pub struct VM<'a> {
     tokens: Tokenizer<'a>,
+    heap_mem: Vec<Value>,
+    dict_mem: Vec<Value>,
+    curr_word: usize,
+
     ret_stack: Vec<Word>,
-    dict_compile: HashMap<String, Word>,
+    var_stack: Vec<String>,
+    typ_stack: Vec<Value>,
+    val_stack: Vec<Value>,
 }
 impl<'a> VM<'a> {
     pub fn new(input: &'a str) -> Self {
         Self {
             tokens: Tokenizer::new(input),
             ret_stack: vec![],
-            dict_compile: HashMap::new(),
+            var_stack: vec![],
+            typ_stack: vec![],
+            val_stack: vec![],
+            heap_mem: vec![],
+            dict_mem: vec![],
+            curr_word: 0,
         }
     }
 
+    pub fn create_word(&mut self, name: &&str, code: Word) {
+        self.push_dict((name as *const &str) as Value);
+        self.push_dict(code as Value);
+    }
+    pub fn push_dict(&mut self, val: Value) {
+        self.dict_mem.push(val);
+    }
+    pub fn exec_word(&mut self, word_ptr: usize) {
+      self.curr_word = word_ptr;
+      unsafe {
+        let code = word_ptr + 1;
+        std::mem::transmute::<Value, Word>(self.dict_mem[code])(self);
+      }
+    }
     pub fn run(&mut self, stdout: &mut dyn Write) -> Result<(), Box<dyn Error>> {
         let Some(word) = self.tokens.next() else {
             return Ok(());
@@ -89,8 +123,6 @@ impl<'a> VM<'a> {
 
 #[cfg(test)]
 mod tests {
-    use std::io::stdin;
-
     use super::*;
 
     #[test]
@@ -111,12 +143,15 @@ mod tests {
     }
 
     #[test]
-    pub fn vm_run() -> Result<(), Box<dyn Error>> {
-        let code = "log 'hello world'";
-        let mut vm = VM::new(code);
-        let mut output = String::new();
-        vm.run(&mut output)?;
-        assert_eq!(output, "hello world\n");
-        Ok(())
+    #[should_panic(expected = "Success")]
+    pub fn compile_hello_world() {
+        let mut vm = VM::new("");
+        let name = "hello";
+        let code: Word = |_| {
+          panic!("Success!");
+        };
+        vm.create_word(&name, code);
+        assert_eq!(vm.dict_mem, [(&name as *const &str) as Value, code as Value]);
+        vm.exec_word(0);
     }
 }
