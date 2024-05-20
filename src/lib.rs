@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::Write;
+use std::marker::PhantomData;
 use std::ptr::NonNull;
 
 #[derive(Debug, PartialEq)]
@@ -50,21 +51,23 @@ impl<'a> Iterator for Tokenizer<'a> {
 /// This type represents how values are represented within the virtual machine
 ///
 /// Because this language is statically typed, we do not need to keep track of type tags
-type Value = u64;
+type Value = usize;
 
 pub fn str_to_val(val: &&str) -> Value {
-   (val as *const &str) as Value
+    (val as *const &str) as Value
 }
-type Word = fn(&VM);
+
 pub struct VM<'a> {
     tokens: Tokenizer<'a>,
     heap_mem: Vec<Value>,
     dict_mem: Vec<Value>,
+    top_word: usize,
     curr_word: usize,
 
-    ret_stack: Vec<Word>,
+    ret_stack: Vec<usize>,
+
+    type_stack: Vec<Value>,
     var_stack: Vec<String>,
-    typ_stack: Vec<Value>,
     val_stack: Vec<Value>,
 }
 impl<'a> VM<'a> {
@@ -73,15 +76,22 @@ impl<'a> VM<'a> {
             tokens: Tokenizer::new(input),
             ret_stack: vec![],
             var_stack: vec![],
-            typ_stack: vec![],
+            type_stack: vec![],
             val_stack: vec![],
             heap_mem: vec![],
             dict_mem: vec![],
+            top_word: 0,
             curr_word: 0,
         }
     }
 
-    pub fn create_word(&mut self, name: &&str, code: Word) {
+    /// Creates a word.
+    /// The structure of a word is as follows
+    /// <link_ptr> | <name pointer> | <code pointer> | <parameters>.....
+    pub fn create_word(&mut self, name: &&str, code: fn(&VM)) {
+        let prev = self.top_word;
+        self.top_word = self.dict_mem.len();
+        self.push_dict(prev);
         self.push_dict((name as *const &str) as Value);
         self.push_dict(code as Value);
     }
@@ -89,11 +99,11 @@ impl<'a> VM<'a> {
         self.dict_mem.push(val);
     }
     pub fn exec_word(&mut self, word_ptr: usize) {
-      self.curr_word = word_ptr;
-      unsafe {
-        let code = word_ptr + 1;
-        std::mem::transmute::<Value, Word>(self.dict_mem[code])(self);
-      }
+        self.curr_word = word_ptr;
+        unsafe {
+            let code = word_ptr + 2;
+            std::mem::transmute::<Value, fn(&VM)>(self.dict_mem[code])(self);
+        }
     }
     pub fn run(&mut self, stdout: &mut dyn Write) -> Result<(), Box<dyn Error>> {
         let Some(word) = self.tokens.next() else {
@@ -143,15 +153,41 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Success")]
+    #[should_panic(expected = "Gege Akutami must be stopped")]
     pub fn compile_hello_world() {
         let mut vm = VM::new("");
-        let name = "hello";
-        let code: Word = |_| {
-          panic!("Success!");
+        let msg1 = "hello";
+        let code1: fn(&VM) = |_| {
+            panic!("Success!");
         };
-        vm.create_word(&name, code);
-        assert_eq!(vm.dict_mem, [(&name as *const &str) as Value, code as Value]);
-        vm.exec_word(0);
+        vm.create_word(&msg1, code1);
+
+        assert_eq!(
+            vm.dict_mem,
+            [0, (&msg1 as *const &str) as Value, code1 as Value]
+        );
+
+        let msg2 = "world";
+        let code2: fn(&VM) = |_| {
+            panic!("Failure!");
+        };
+        vm.create_word(&msg2, code2);
+
+        assert_eq!(
+            vm.dict_mem,
+            [0, (&msg1 as *const &str) as Value, code1 as Value, 0, (&msg2 as *const &str) as Value, code2 as Value]
+        );
+
+        let msg3 = "stop";
+        let code3: fn(&VM) = |_| {
+            panic!("Gege Akutami must be stopped");
+        };
+        vm.create_word(&msg3, code3);
+
+        assert_eq!(
+            vm.dict_mem,
+            [0, (&msg1 as *const &str) as Value, code1 as Value, 0, (&msg2 as *const &str) as Value, code2 as Value, 3, (&msg3 as *const &str) as Value, code3 as Value]
+        );
+        vm.exec_word(6);
     }
 }
