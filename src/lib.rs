@@ -1,8 +1,7 @@
-use std::collections::HashMap;
+#![deny(clippy::pedantic)]
+
 use std::error::Error;
 use std::fmt::Write;
-use std::marker::PhantomData;
-use std::ptr::NonNull;
 
 #[derive(Debug, PartialEq)]
 pub enum Token<'a> {
@@ -16,6 +15,7 @@ pub struct Tokenizer<'a> {
 }
 
 impl<'a> Tokenizer<'a> {
+    #[must_use]
     pub fn new(input: &'a str) -> Self {
         Self { input }
     }
@@ -53,8 +53,8 @@ impl<'a> Iterator for Tokenizer<'a> {
 /// Because this language is statically typed, we do not need to keep track of type tags
 type Value = usize;
 
-pub fn str_to_val(val: &&str) -> Value {
-    (val as *const &str) as Value
+fn str_to_val(val: &&str) -> Value {
+    unsafe { std::mem::transmute::<&&str, Value>(val) }
 }
 
 pub struct VM<'a> {
@@ -71,6 +71,7 @@ pub struct VM<'a> {
     val_stack: Vec<Value>,
 }
 impl<'a> VM<'a> {
+    #[must_use]
     pub fn new(input: &'a str) -> Self {
         Self {
             tokens: Tokenizer::new(input),
@@ -87,12 +88,12 @@ impl<'a> VM<'a> {
 
     /// Creates a word.
     /// The structure of a word is as follows
-    /// <link_ptr> | <name pointer> | <code pointer> | <parameters>.....
+    /// <`link_ptr`> | <`name`> | <`code`> | parameters.....
     pub fn create_word(&mut self, name: &&str, code: fn(&VM)) {
         let prev = self.top_word;
         self.top_word = self.dict_mem.len();
         self.push_dict(prev);
-        self.push_dict((name as *const &str) as Value);
+        self.push_dict(str_to_val(name));
         self.push_dict(code as Value);
     }
     pub fn push_dict(&mut self, val: Value) {
@@ -105,6 +106,9 @@ impl<'a> VM<'a> {
             std::mem::transmute::<Value, fn(&VM)>(self.dict_mem[code])(self);
         }
     }
+    /// Runs the code in the current virtual machine
+    /// # Errors
+    /// TODO
     pub fn run(&mut self, stdout: &mut dyn Write) -> Result<(), Box<dyn Error>> {
         let Some(word) = self.tokens.next() else {
             return Ok(());
@@ -116,11 +120,11 @@ impl<'a> VM<'a> {
         if word == "log" {
             match self.tokens.next().ok_or("Expected argument. Got nothing")? {
                 Token::Number(n) => {
-                    writeln!(stdout, "{}", n)?;
+                    writeln!(stdout, "{n}")?;
                     Ok(())
                 }
                 Token::Str(s) => {
-                    writeln!(stdout, "{}", s)?;
+                    writeln!(stdout, "{s}")?;
                     Ok(())
                 }
                 Token::Word(_) => todo!("Variables not implemented yet"),
@@ -133,6 +137,8 @@ impl<'a> VM<'a> {
 
 #[cfg(test)]
 mod tests {
+    use std::alloc::Allocator;
+
     use super::*;
 
     #[test]
@@ -152,20 +158,14 @@ mod tests {
         assert_eq!(tokens.next(), None);
     }
 
-    #[test]
-    #[should_panic(expected = "Gege Akutami must be stopped")]
-    pub fn compile_hello_world() {
-        let mut vm = VM::new("");
+    fn create_words(vm: &mut VM) {
         let msg1 = "hello";
         let code1: fn(&VM) = |_| {
             panic!("Success!");
         };
         vm.create_word(&msg1, code1);
 
-        assert_eq!(
-            vm.dict_mem,
-            [0, (&msg1 as *const &str) as Value, code1 as Value]
-        );
+        assert_eq!(vm.dict_mem, [0, str_to_val(&msg1), code1 as Value]);
 
         let msg2 = "world";
         let code2: fn(&VM) = |_| {
@@ -175,7 +175,14 @@ mod tests {
 
         assert_eq!(
             vm.dict_mem,
-            [0, (&msg1 as *const &str) as Value, code1 as Value, 0, (&msg2 as *const &str) as Value, code2 as Value]
+            [
+                0,
+                str_to_val(&msg1),
+                code1 as Value,
+                0,
+                str_to_val(&msg2),
+                code2 as Value
+            ]
         );
 
         let msg3 = "stop";
@@ -186,8 +193,25 @@ mod tests {
 
         assert_eq!(
             vm.dict_mem,
-            [0, (&msg1 as *const &str) as Value, code1 as Value, 0, (&msg2 as *const &str) as Value, code2 as Value, 3, (&msg3 as *const &str) as Value, code3 as Value]
+            [
+                0,
+                str_to_val(&msg1),
+                code1 as Value,
+                0,
+                str_to_val(&msg2),
+                code2 as Value,
+                3,
+                str_to_val(&msg3),
+                code3 as Value
+            ]
         );
+    }
+
+    #[test]
+    #[should_panic(expected = "Gege Akutami must be stopped")]
+    pub fn compile_hello_world() {
+        let mut vm = VM::new("");
+        create_words(&mut vm);
         vm.exec_word(6);
     }
 }
