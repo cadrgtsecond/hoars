@@ -5,6 +5,10 @@ use std::array::from_mut;
 use std::error::Error;
 use std::fmt::Write;
 
+use dict::Dictionary;
+
+mod dict;
+
 #[derive(Debug, PartialEq)]
 pub enum Token<'a> {
     Word(&'a str),
@@ -57,9 +61,8 @@ type Value = usize;
 
 pub struct VM<'a> {
     tokens: Tokenizer<'a>,
+    pub compile_dict: Dictionary,
     heap_mem: Vec<Value>,
-    dict_mem: Vec<Value>,
-    top_word: usize,
     curr_word: usize,
 
     ret_stack: Vec<usize>,
@@ -73,65 +76,14 @@ impl<'a> VM<'a> {
     pub fn new(input: &'a str) -> Self {
         Self {
             tokens: Tokenizer::new(input),
+            compile_dict: Dictionary::new(),
             ret_stack: vec![],
             var_stack: vec![],
             type_stack: vec![],
             val_stack: vec![],
             heap_mem: vec![],
-            dict_mem: vec![],
-            top_word: 0,
             curr_word: 0,
         }
-    }
-
-    /// Creates a word.
-    /// The structure of a word is as follows
-    /// <`link_ptr`> | <`len`> | <`name`> | <`code`> | parameters.....
-    pub fn create_word(&mut self, name: &'static str, code: fn(&VM)) {
-        let prev = self.top_word;
-        self.top_word = self.dict_mem.len();
-        self.push_dict(prev);
-        self.push_dict(name.len());
-        self.push_dict(name.as_ptr() as Value);
-        self.push_dict(code as Value);
-    }
-
-    /// Pushes a word onto the virtual machine's dictionary
-    pub fn push_dict(&mut self, val: Value) {
-        self.dict_mem.push(val);
-    }
-
-    pub fn exec_word(&mut self, word_ptr: usize) {
-        self.curr_word = word_ptr;
-        unsafe {
-            let code = word_ptr + 3;
-            std::mem::transmute::<Value, fn(&VM)>(self.dict_mem[code])(self);
-        }
-    }
-
-    /// Looks up a word in the dictionary
-    pub fn lookup_word(&mut self, name: &str) -> Option<Value> {
-        let mut curr = self.top_word;
-        loop {
-            // safe because we created it this way
-            let curr_name: &[u8] = unsafe {
-                let len = self.dict_mem[curr + 1];
-                let ptr = self.dict_mem[curr + 2] as *const u8;
-                std::slice::from_raw_parts(ptr, len)
-            };
-            if name.as_bytes() == curr_name {
-                return Some(curr);
-            }
-            // The default entry always has an empty name
-            if curr_name.len() == 0 {
-                return Some(curr);
-            }
-            if curr == self.dict_mem[curr] {
-                break;
-            }
-            curr = self.dict_mem[curr];
-        }
-        None
     }
 
     /// Runs the code in the current virtual machine
@@ -161,6 +113,14 @@ impl<'a> VM<'a> {
             Err("Unknown word".into())
         }
     }
+
+    pub fn exec_compile_word(&mut self, word_ptr: usize) {
+        self.curr_word = word_ptr;
+        unsafe {
+            let code = word_ptr + 3;
+            std::mem::transmute::<Value, fn(&VM)>(self.compile_dict[code])(self);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -182,91 +142,5 @@ mod tests {
         assert_eq!(tokens.next(), Some(Token::Word("print")));
         assert_eq!(tokens.next(), Some(Token::Str("hello world!")));
         assert_eq!(tokens.next(), None);
-    }
-
-    fn create_words(vm: &mut VM) {
-        let msg1 = "";
-        let code1: fn(&VM) = |_| {
-            panic!("Unknown word!");
-        };
-        vm.create_word(&msg1, code1);
-
-        assert_eq!(
-            vm.dict_mem,
-            [0, msg1.len(), msg1.as_ptr() as Value, code1 as Value]
-        );
-        assert_eq!(vm.top_word, 0);
-
-        let msg2 = "hello";
-        let code2: fn(&VM) = |_| {
-            panic!("Success!");
-        };
-        vm.create_word(&msg2, code2);
-
-        assert_eq!(
-            vm.dict_mem,
-            [
-                0,
-                msg1.len(),
-                msg1.as_ptr() as Value,
-                code1 as Value,
-                0,
-                msg2.len(),
-                msg2.as_ptr() as Value,
-                code2 as Value
-            ]
-        );
-        assert_eq!(vm.top_word, 4);
-
-        let msg3 = "stop";
-        let code3: fn(&VM) = |_| {
-            panic!("Gege Akutami must be stopped");
-        };
-        vm.create_word(&msg3, code3);
-
-        assert_eq!(
-            vm.dict_mem,
-            [
-                0,
-                msg1.len(),
-                msg1.as_ptr() as Value,
-                code1 as Value,
-                0,
-                msg2.len(),
-                msg2.as_ptr() as Value,
-                code2 as Value,
-                4,
-                msg3.len(),
-                msg3.as_ptr() as Value,
-                code3 as Value
-            ]
-        );
-        assert_eq!(vm.top_word, 8);
-    }
-
-    #[test]
-    #[should_panic(expected = "Gege Akutami must be stopped")]
-    pub fn compile_hello_world() {
-        let mut vm = VM::new("");
-        create_words(&mut vm);
-        vm.exec_word(8);
-    }
-
-    #[test]
-    pub fn lookup_words() {
-        let mut vm = VM::new("");
-        create_words(&mut vm);
-        assert_eq!(vm.lookup_word("hello"), Some(4));
-        assert_eq!(vm.lookup_word("unknown"), Some(0));
-        assert_eq!(vm.lookup_word("stop"), Some(8));
-    }
-
-    #[test]
-    #[should_panic(expected = "Unknown word")]
-    pub fn lookup_unknown_word() {
-        let mut vm = VM::new("");
-        create_words(&mut vm);
-        let word = vm.lookup_word("unknown").unwrap();
-        vm.exec_word(word);
     }
 }
