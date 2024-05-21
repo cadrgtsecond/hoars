@@ -1,5 +1,7 @@
 #![deny(clippy::pedantic)]
 
+use std::arch::x86_64::_MM_FLUSH_ZERO_MASK;
+use std::array::from_mut;
 use std::error::Error;
 use std::fmt::Write;
 
@@ -53,10 +55,6 @@ impl<'a> Iterator for Tokenizer<'a> {
 /// Because this language is statically typed, we do not need to keep track of type tags
 type Value = usize;
 
-fn str_to_val(val: &&str) -> Value {
-    unsafe { std::mem::transmute::<&&str, Value>(val) }
-}
-
 pub struct VM<'a> {
     tokens: Tokenizer<'a>,
     heap_mem: Vec<Value>,
@@ -88,24 +86,50 @@ impl<'a> VM<'a> {
 
     /// Creates a word.
     /// The structure of a word is as follows
-    /// <`link_ptr`> | <`name`> | <`code`> | parameters.....
-    pub fn create_word(&mut self, name: &&str, code: fn(&VM)) {
+    /// <`link_ptr`> | <`len`> | <`name`> | <`code`> | parameters.....
+    pub fn create_word(&mut self, name: &'static str, code: fn(&VM)) {
         let prev = self.top_word;
         self.top_word = self.dict_mem.len();
         self.push_dict(prev);
-        self.push_dict(str_to_val(name));
+        self.push_dict(name.len());
+        self.push_dict(name.as_ptr() as Value);
         self.push_dict(code as Value);
     }
+
+    /// Pushes a word onto the virtual machine's dictionary
     pub fn push_dict(&mut self, val: Value) {
         self.dict_mem.push(val);
     }
+
     pub fn exec_word(&mut self, word_ptr: usize) {
         self.curr_word = word_ptr;
         unsafe {
-            let code = word_ptr + 2;
+            let code = word_ptr + 3;
             std::mem::transmute::<Value, fn(&VM)>(self.dict_mem[code])(self);
         }
     }
+
+    /// Looks up a word in the dictionary
+    pub fn lookup_word(&mut self, name: &str) -> Option<Value> {
+        let mut curr = self.top_word;
+        loop {
+            // safe because we created it this way
+            let curr_name: &[u8] = unsafe {
+              let len = self.dict_mem[curr + 1];
+              let ptr = self.dict_mem[curr + 2] as *const u8;
+              std::slice::from_raw_parts(ptr, len)
+            };
+            if name.as_bytes() == curr_name {
+                return Some(curr);
+            }
+            if curr == self.dict_mem[curr] {
+                break;
+            }
+            curr = self.dict_mem[curr];
+        }
+        None
+    }
+
     /// Runs the code in the current virtual machine
     /// # Errors
     /// TODO
@@ -137,8 +161,6 @@ impl<'a> VM<'a> {
 
 #[cfg(test)]
 mod tests {
-    use std::alloc::Allocator;
-
     use super::*;
 
     #[test]
@@ -165,7 +187,8 @@ mod tests {
         };
         vm.create_word(&msg1, code1);
 
-        assert_eq!(vm.dict_mem, [0, str_to_val(&msg1), code1 as Value]);
+        assert_eq!(vm.dict_mem, [0, msg1.len(), msg1.as_ptr() as Value, code1 as Value]);
+        assert_eq!(vm.top_word, 0);
 
         let msg2 = "world";
         let code2: fn(&VM) = |_| {
@@ -177,13 +200,16 @@ mod tests {
             vm.dict_mem,
             [
                 0,
-                str_to_val(&msg1),
+                msg1.len(),
+                msg1.as_ptr() as Value,
                 code1 as Value,
                 0,
-                str_to_val(&msg2),
+                msg2.len(),
+                msg2.as_ptr() as Value,
                 code2 as Value
             ]
         );
+        assert_eq!(vm.top_word, 4);
 
         let msg3 = "stop";
         let code3: fn(&VM) = |_| {
@@ -195,16 +221,20 @@ mod tests {
             vm.dict_mem,
             [
                 0,
-                str_to_val(&msg1),
+                msg1.len(),
+                msg1.as_ptr() as Value,
                 code1 as Value,
                 0,
-                str_to_val(&msg2),
+                msg2.len(),
+                msg2.as_ptr() as Value,
                 code2 as Value,
-                3,
-                str_to_val(&msg3),
+                4,
+                msg3.len(),
+                msg3.as_ptr() as Value,
                 code3 as Value
             ]
         );
+        assert_eq!(vm.top_word, 8);
     }
 
     #[test]
@@ -212,6 +242,16 @@ mod tests {
     pub fn compile_hello_world() {
         let mut vm = VM::new("");
         create_words(&mut vm);
-        vm.exec_word(6);
+        vm.exec_word(8);
+    }
+
+    #[test]
+    pub fn lookup_words() {
+        let mut vm = VM::new("");
+        create_words(&mut vm);
+        assert_eq!(vm.lookup_word("hello"), Some(0));
+        assert_eq!(vm.lookup_word("world"), Some(4));
+        assert_eq!(vm.lookup_word("unknown"), None);
+        assert_eq!(vm.lookup_word("stop"), Some(8));
     }
 }
