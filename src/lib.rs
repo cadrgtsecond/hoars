@@ -115,11 +115,15 @@ impl<'a> VM<'a> {
         loop {
             // safe because we created it this way
             let curr_name: &[u8] = unsafe {
-              let len = self.dict_mem[curr + 1];
-              let ptr = self.dict_mem[curr + 2] as *const u8;
-              std::slice::from_raw_parts(ptr, len)
+                let len = self.dict_mem[curr + 1];
+                let ptr = self.dict_mem[curr + 2] as *const u8;
+                std::slice::from_raw_parts(ptr, len)
             };
             if name.as_bytes() == curr_name {
+                return Some(curr);
+            }
+            // The default entry always has an empty name
+            if curr_name.len() == 0 {
                 return Some(curr);
             }
             if curr == self.dict_mem[curr] {
@@ -181,18 +185,21 @@ mod tests {
     }
 
     fn create_words(vm: &mut VM) {
-        let msg1 = "hello";
+        let msg1 = "";
         let code1: fn(&VM) = |_| {
-            panic!("Success!");
+            panic!("Unknown word!");
         };
         vm.create_word(&msg1, code1);
 
-        assert_eq!(vm.dict_mem, [0, msg1.len(), msg1.as_ptr() as Value, code1 as Value]);
+        assert_eq!(
+            vm.dict_mem,
+            [0, msg1.len(), msg1.as_ptr() as Value, code1 as Value]
+        );
         assert_eq!(vm.top_word, 0);
 
-        let msg2 = "world";
+        let msg2 = "hello";
         let code2: fn(&VM) = |_| {
-            panic!("Failure!");
+            panic!("Success!");
         };
         vm.create_word(&msg2, code2);
 
@@ -249,9 +256,17 @@ mod tests {
     pub fn lookup_words() {
         let mut vm = VM::new("");
         create_words(&mut vm);
-        assert_eq!(vm.lookup_word("hello"), Some(0));
-        assert_eq!(vm.lookup_word("world"), Some(4));
-        assert_eq!(vm.lookup_word("unknown"), None);
+        assert_eq!(vm.lookup_word("hello"), Some(4));
+        assert_eq!(vm.lookup_word("unknown"), Some(0));
         assert_eq!(vm.lookup_word("stop"), Some(8));
+    }
+
+    #[test]
+    #[should_panic(expected = "Unknown word")]
+    pub fn lookup_unknown_word() {
+        let mut vm = VM::new("");
+        create_words(&mut vm);
+        let word = vm.lookup_word("unknown").unwrap();
+        vm.exec_word(word);
     }
 }
