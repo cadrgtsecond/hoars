@@ -21,7 +21,7 @@ impl Dictionary {
     /// Creates a word.
     /// The structure of a word is as follows
     /// <`link_ptr`> | <`len`> | <`name`> | <`code`> | parameters.....
-    pub fn create_word(&mut self, name: &'static str, code: fn(&VM)) {
+    pub fn create_word(&mut self, name: &'static str, code: fn(&mut VM)) {
         let prev = self.top_word;
         self.top_word = self.mem.len();
         self.push(prev);
@@ -76,10 +76,10 @@ mod tests {
     use super::*;
     fn create_words(dict: &mut Dictionary) {
         let msg1 = "";
-        let code1: fn(&VM) = |_| {
+        let code1:fn(&mut VM) = |_| {
             panic!("Unknown word!");
         };
-        dict.create_word(&msg1, code1);
+        dict.create_word(msg1, code1);
 
         assert_eq!(
             dict.mem,
@@ -88,10 +88,10 @@ mod tests {
         assert_eq!(dict.top_word, 0);
 
         let msg2 = "hello";
-        let code2: fn(&VM) = |_| {
+        let code2: fn(&mut VM) = |_| {
             panic!("Success!");
         };
-        dict.create_word(&msg2, code2);
+        dict.create_word(msg2, code2);
 
         assert_eq!(
             dict.mem,
@@ -109,10 +109,10 @@ mod tests {
         assert_eq!(dict.top_word, 4);
 
         let msg3 = "stop";
-        let code3: fn(&VM) = |_| {
+        let code3: fn(&mut VM) = |_| {
             panic!("Gege Akutami must be stopped");
         };
-        dict.create_word(&msg3, code3);
+        dict.create_word(msg3, code3);
 
         assert_eq!(
             dict.mem,
@@ -137,7 +137,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "Gege Akutami must be stopped")]
     pub fn compile_hello_world() {
-        let mut vm = VM::new("");
+        let mut vm = VM::new("", Dictionary::new());
         create_words(&mut vm.compile_dict);
         vm.exec_compile_word(8);
     }
@@ -154,7 +154,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "Unknown word")]
     pub fn lookup_unknown_word() {
-        let mut vm = VM::new("");
+        let mut vm = VM::new("", Dictionary::new());
         create_words(&mut vm.compile_dict);
         let word = vm.compile_dict.lookup_word("unknown").unwrap();
         vm.exec_compile_word(word);
