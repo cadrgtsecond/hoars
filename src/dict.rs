@@ -55,6 +55,10 @@ impl Dictionary {
         None
     }
 
+    /// Returns the total length of the dictionary memory
+    pub fn len(&self) -> usize {
+      self.mem.len()
+    }
 }
 
 impl Default for Dictionary {
@@ -138,8 +142,8 @@ mod tests {
     #[should_panic(expected = "Gege Akutami must be stopped")]
     pub fn compile_hello_world() {
         let mut vm = VM::new("", Dictionary::new());
-        create_words(&mut vm.compile_dict);
-        vm.exec_compile_word(8);
+        create_words(&mut vm.run_dict);
+        vm.exec_runtime_word(8);
     }
 
     #[test]
@@ -155,8 +159,8 @@ mod tests {
     #[should_panic(expected = "Unknown word")]
     pub fn lookup_unknown_word() {
         let mut vm = VM::new("", Dictionary::new());
-        create_words(&mut vm.compile_dict);
-        let word = vm.compile_dict.lookup_word("unknown").unwrap();
-        vm.exec_compile_word(word);
+        create_words(&mut vm.run_dict);
+        let word = vm.run_dict.lookup_word("unknown").unwrap();
+        vm.exec_runtime_word(word);
     }
 }
