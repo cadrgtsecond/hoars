@@ -1,17 +1,20 @@
 #![deny(clippy::pedantic)]
 
-use std::{error::Error, ops::Deref};
+use std::error::Error;
 
 use dict::Dictionary;
 use tokenizer::{Token, Tokenizer};
 
 mod dict;
+mod fetch;
 mod tokenizer;
 
 /// This type represents how values are represented within the virtual machine
 ///
 /// Because this language is statically typed, we do not need to keep track of type tags
 type Value = usize;
+/// A pointer to some native code
+type CodePtr = fn(&mut VM);
 
 pub struct VM<'a> {
     tokens: Tokenizer<'a>,
