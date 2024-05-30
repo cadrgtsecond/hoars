@@ -63,7 +63,6 @@ pub struct VM<'a> {
     curr_word: usize,
     next_word: usize,
 
-    ret_stack: Vec<usize>,
     ret: usize,
 
     type_stack: Vec<Value>,
@@ -78,7 +77,6 @@ impl<'a> VM<'a> {
         Self {
             tokens: Tokenizer::new(input),
             run_dict,
-            ret_stack: vec![],
             var_stack: vec![],
             type_stack: vec![],
             val_stack: vec![],
@@ -110,6 +108,8 @@ impl<'a> VM<'a> {
     }
 
     /// Reads tokens from [`Tokenizer`] and compiles an expression onto `comptime_dict`
+    /// ## Panics
+    /// If builtins like `__value` are not found
     pub fn compile_expr(&mut self) {
         let Some(token) = self.tokens.next() else {
             return;
@@ -129,7 +129,7 @@ impl<'a> VM<'a> {
                 self.run_dict
                     .push(n.try_into().expect("Numeric literal out of range"));
             }
-            Token::Str(s) => {
+            Token::Str(_) => {
                 todo!("Strings to be implemented")
             }
         }

@@ -44,7 +44,7 @@ impl Dictionary {
                 return Some(curr);
             }
             // The default entry always has an empty name
-            if curr_name.len() == 0 {
+            if curr_name.is_empty() {
                 return Some(curr);
             }
             if curr == self.mem[curr] {
