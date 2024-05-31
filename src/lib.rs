@@ -13,17 +13,16 @@ mod tokenizer;
 /// Because this language is statically typed, we do not need to keep track of type tags
 type Value = usize;
 /// A pointer to some native code
-type CodePtr = fn(&mut VM);
+type CodeFn = fn(&mut VM);
 
 pub struct VM<'a> {
     tokens: Tokenizer<'a>,
-    run_dict: HashMap<String, Ptr<CodePtr>>,
+    run_dict: HashMap<String, Ptr<CodeFn>>,
+    compile_dict: HashMap<String, Ptr<CodeFn>>,
     heap_mem: Vec<Value>,
-    curr_word: Ptr<CodePtr>,
-    /// Address of the current word being compiled
-    curr_code: Ptr<CodePtr>,
+    curr_word: Ptr<CodeFn>,
 
-    ret: Ptr<Value>,
+    curr_value: Ptr<Value>,
 
     stdout: Box<dyn std::io::Write + 'a>,
 }
@@ -34,11 +33,12 @@ impl<'a> VM<'a> {
         Self {
             tokens: Tokenizer::new(input),
             run_dict: HashMap::new(),
+            compile_dict: HashMap::new(),
             heap_mem: Vec::with_capacity(4096),
             curr_word: Ptr::new(0),
             stdout: Box::new(std::io::stdout()),
-            ret: Ptr::new(0),
-            curr_code: Ptr::new(0),
+
+            curr_value: Ptr::new(0),
         }
     }
 
@@ -50,7 +50,7 @@ impl<'a> VM<'a> {
         let addr = self.heap_mem.len();
         self.compile_expr();
         self.exec_code(Ptr::new(addr));
-        Ok(self.ret)
+        Ok(self.curr_value)
     }
 
     /// Reads tokens from [`Tokenizer`] and compiles an expression onto `comptime_dict`
@@ -62,13 +62,19 @@ impl<'a> VM<'a> {
         };
         self.heap_mem.push(exec_compiled as Value);
         match token {
-            Token::Word(w) => match self.run_dict.get(w) {
-                Some(word) => self.heap_mem.push(word.inner()),
-                None => todo!(),
-            },
+            Token::Word(w) => {
+                if let Some(word) = self.compile_dict.get(w) {
+                    self.exec_code(*word);
+                } else if let Some(word) = self.run_dict.get(w) {
+                    self.heap_mem.push(word.inner());
+                } else {
+                    todo!();
+                }
+            }
             Token::Number(n) => {
                 self.heap_mem.push(builtin_value as Value);
-                self.heap_mem.push(n.try_into().expect("Numeric literal out of range"));
+                self.heap_mem
+                    .push(n.try_into().expect("Numeric literal out of range"));
             }
             Token::Str(_) => {
                 todo!("Strings to be implemented")
@@ -76,7 +82,7 @@ impl<'a> VM<'a> {
         }
     }
 
-    pub fn exec_code(&mut self, code: Ptr<CodePtr>) {
+    pub fn exec_code(&mut self, code: Ptr<CodeFn>) {
         let old = self.curr_word;
         self.curr_word = code;
         code.fetch(&self.heap_mem)(self);
@@ -84,22 +90,23 @@ impl<'a> VM<'a> {
     }
 
     fn create_word(&mut self, arg: &str, word: fn(&mut VM<'static>)) {
-      self.heap_mem.push(word as Value);
-      self.run_dict.insert(arg.to_string(), Ptr::new(self.heap_mem.len() - 1));
+        self.heap_mem.push(word as Value);
+        self.run_dict
+            .insert(arg.to_string(), Ptr::new(self.heap_mem.len() - 1));
     }
 }
 
 fn exec_compiled(vm: &mut VM) {
-  unsafe {
-    vm.curr_code = vm.curr_code.offset(1);
-    vm.exec_code(vm.curr_code);
-  }
+    unsafe {
+        vm.curr_word = vm.curr_word.offset(1).fetch(&vm.heap_mem);
+        vm.exec_code(vm.curr_word);
+    }
 }
 
 fn builtin_value(vm: &mut VM) {
     unsafe {
-        vm.curr_code = vm.curr_code.offset(1);
-        vm.ret = vm.curr_code.cast_to().fetch(&vm.heap_mem);
+        vm.curr_word = vm.curr_word.offset(1);
+        vm.curr_value = vm.curr_word.cast_to().fetch(&vm.heap_mem);
     }
 }
 

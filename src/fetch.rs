@@ -4,7 +4,7 @@
 use fortuples::fortuples;
 use std::marker::PhantomData;
 
-use crate::{CodePtr, Value};
+use crate::{CodeFn, Value};
 
 /// A "pointer" containing a `usize` that may be dereferenced as a type `T`
 /// It doesn't actually contain a `T` but you can use the [`Fetch`] trait to
@@ -45,9 +45,9 @@ impl<T> Fetch<Ptr<T>> for Ptr<Ptr<T>> {
         Ptr::new(mem[self.0])
     }
 }
-impl Fetch<CodePtr> for Ptr<CodePtr> {
-    fn fetch(&self, mem: &[Value]) -> CodePtr {
-        unsafe { std::mem::transmute::<Value, CodePtr>(mem[self.0]) }
+impl Fetch<CodeFn> for Ptr<CodeFn> {
+    fn fetch(&self, mem: &[Value]) -> CodeFn {
+        unsafe { std::mem::transmute::<Value, CodeFn>(mem[self.0]) }
     }
 }
 
