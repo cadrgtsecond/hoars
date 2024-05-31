@@ -1,11 +1,10 @@
 #![deny(clippy::pedantic)]
 
-use std::error::Error;
+use std::{collections::HashMap, error::Error};
 
-use dict::Dictionary;
+use fetch::{Fetch, Ptr};
 use tokenizer::{Token, Tokenizer};
 
-mod dict;
 mod fetch;
 mod tokenizer;
 
@@ -18,33 +17,28 @@ type CodePtr = fn(&mut VM);
 
 pub struct VM<'a> {
     tokens: Tokenizer<'a>,
-    pub run_dict: Dictionary,
+    run_dict: HashMap<String, Ptr<CodePtr>>,
     heap_mem: Vec<Value>,
-    curr_word: usize,
-    next_word: usize,
+    curr_word: Ptr<CodePtr>,
+    /// Address of the current word being compiled
+    curr_code: Ptr<CodePtr>,
 
-    ret: usize,
+    ret: Ptr<Value>,
 
-    type_stack: Vec<Value>,
-    var_stack: Vec<String>,
-    val_stack: Vec<Value>,
     stdout: Box<dyn std::io::Write + 'a>,
 }
 
 impl<'a> VM<'a> {
     #[must_use]
-    pub fn new(input: &'a str, run_dict: Dictionary) -> Self {
+    pub fn new(input: &'a str) -> Self {
         Self {
             tokens: Tokenizer::new(input),
-            run_dict,
-            var_stack: vec![],
-            type_stack: vec![],
-            val_stack: vec![],
-            heap_mem: vec![],
-            curr_word: 0,
+            run_dict: HashMap::new(),
+            heap_mem: Vec::with_capacity(4096),
+            curr_word: Ptr::new(0),
             stdout: Box::new(std::io::stdout()),
-            next_word: 0,
-            ret: 0,
+            ret: Ptr::new(0),
+            curr_code: Ptr::new(0),
         }
     }
 
@@ -52,18 +46,10 @@ impl<'a> VM<'a> {
     /// evaluating said code
     /// # Errors
     /// TODO
-    pub fn run(&mut self) -> Result<Value, Box<dyn Error>> {
-        let Some(word) = self.tokens.next() else {
-            return Ok(0);
-        };
-        let Token::Word(word) = word else {
-            return Err("Expected word".into());
-        };
-        let dict_entry = self
-            .run_dict
-            .lookup_word(word)
-            .ok_or("Dictionary lookup error")?;
-        self.exec_runtime_word(dict_entry);
+    pub fn run(&mut self) -> Result<Ptr<Value>, Box<dyn Error>> {
+        let addr = self.heap_mem.len();
+        self.compile_expr();
+        self.exec_code(Ptr::new(addr));
         Ok(self.ret)
     }
 
@@ -74,20 +60,15 @@ impl<'a> VM<'a> {
         let Some(token) = self.tokens.next() else {
             return;
         };
+        self.heap_mem.push(exec_compiled as Value);
         match token {
-            Token::Word(w) => {
-                if let Some(word) = self.run_dict.lookup_word(w) {
-                    self.run_dict.push(word);
-                }
-            }
+            Token::Word(w) => match self.run_dict.get(w) {
+                Some(word) => self.heap_mem.push(word.inner()),
+                None => todo!(),
+            },
             Token::Number(n) => {
-                let push_value = self
-                    .run_dict
-                    .lookup_word("__value")
-                    .expect("Builtin __value not found. Cannot continue forward");
-                self.run_dict.push(push_value);
-                self.run_dict
-                    .push(n.try_into().expect("Numeric literal out of range"));
+                self.heap_mem.push(builtin_value as Value);
+                self.heap_mem.push(n.try_into().expect("Numeric literal out of range"));
             }
             Token::Str(_) => {
                 todo!("Strings to be implemented")
@@ -95,21 +76,31 @@ impl<'a> VM<'a> {
         }
     }
 
-    pub fn exec_runtime_word(&mut self, word_ptr: usize) {
-        self.curr_word = word_ptr;
-        unsafe {
-            let code = word_ptr + 3;
-            std::mem::transmute::<Value, fn(&mut VM)>(self.run_dict[code])(self);
-        }
+    pub fn exec_code(&mut self, code: Ptr<CodePtr>) {
+        let old = self.curr_word;
+        self.curr_word = code;
+        code.fetch(&self.heap_mem)(self);
+        self.curr_word = old;
+    }
+
+    fn create_word(&mut self, arg: &str, word: fn(&mut VM<'static>)) {
+      self.heap_mem.push(word as Value);
+      self.run_dict.insert(arg.to_string(), Ptr::new(self.heap_mem.len() - 1));
     }
 }
 
-fn builtin_value(vm: &mut VM) {
-    let val = vm.run_dict[vm.next_word];
-    vm.ret = val;
+fn exec_compiled(vm: &mut VM) {
+  unsafe {
+    vm.curr_code = vm.curr_code.offset(1);
+    vm.exec_code(vm.curr_code);
+  }
 }
-fn builtin_pointer(vm: &mut VM) {
-    vm.ret = vm.next_word;
+
+fn builtin_value(vm: &mut VM) {
+    unsafe {
+        vm.curr_code = vm.curr_code.offset(1);
+        vm.ret = vm.curr_code.cast_to().fetch(&vm.heap_mem);
+    }
 }
 
 fn word_log(vm: &mut VM) {
@@ -124,12 +115,9 @@ fn word_log(vm: &mut VM) {
     }
 }
 
-pub fn default_compile_dictionary() -> Dictionary {
-    let mut dict = Dictionary::new();
-    dict.create_word("__value", builtin_value);
-    dict.create_word("__pointer", builtin_pointer);
-    dict.create_word("log", word_log);
-    dict
+pub fn create_default_words(vm: &mut VM) {
+    vm.create_word("__value", builtin_value);
+    vm.create_word("log", word_log);
 }
 
 #[cfg(test)]
@@ -140,7 +128,8 @@ mod tests {
     pub fn hello_test() -> Result<(), Box<dyn Error>> {
         let mut output = Vec::new();
         {
-            let mut vm = VM::new("log 'Hello World!'", default_compile_dictionary());
+            let mut vm = VM::new("log 'Hello World!'");
+            create_default_words(&mut vm);
             vm.stdout = Box::new(&mut output);
             vm.run()?;
         }
