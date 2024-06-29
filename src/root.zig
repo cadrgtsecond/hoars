@@ -37,12 +37,15 @@ fn next_token(input: *[]const u8) ?Token {
 // Built in instructions
 // ///////////////////////////////
 
-fn docol(vm: *VM) void {
-    vm.curr_word = vm.curr_word.? + 1;
-    vm.execute(vm.curr_word.?[0].threaded_code);
+fn docol(state: *State) void {
+    const oldstate = state.curr_word;
+    defer state.curr_word = oldstate;
+
+    state.curr_word = (state.curr_word + 1)[0].threaded_code;
+    state.execute();
 }
-fn hello_world(vm: *VM) void {
-    _ = vm.stdout.write("Hello world\n") catch {
+fn hello_world(state: *State) void {
+    _ = state.stdout.write("Hello world\n") catch {
         @panic("IO Error");
     };
 }
@@ -51,34 +54,45 @@ fn hello_world(vm: *VM) void {
 // Virtual Machine
 // ///////////////////////////////
 
-const CodePtr = *const fn (*VM) void;
+const CodePtr = *const fn (*State) void;
 const Pointer = union {
     native_code: CodePtr,
     threaded_code: WordPtr,
 };
 const WordPtr = [*]const Pointer;
 
-/// A virtual machine that can compile and run code
+/// The state passed to each thread
+const State = struct {
+    vm: *VM,
+    curr_word: WordPtr,
+    stdout: std.io.AnyWriter,
+
+    /// Creates a `State` that executes `word` as `curr_word`
+    pub fn new(vm: *VM, word: WordPtr) State {
+        return .{ .vm = vm, .curr_word = word, .stdout = std.io.getStdOut().writer().any() };
+    }
+
+    /// Runs the current word in the state
+    pub fn execute(state: *State) void {
+        state.curr_word[0].native_code(state);
+    }
+};
+
+/// A virtual machine that can compile code
 const VM = struct {
     const Dictionary = std.StringHashMap(WordPtr);
     run_dict: Dictionary,
     code_alloc: std.heap.ArenaAllocator,
-    curr_word: ?WordPtr,
-    stdout: std.io.AnyWriter,
 
     pub fn init(alloc: std.mem.Allocator) VM {
         var arena = std.heap.ArenaAllocator.init(alloc);
-        return .{ .run_dict = Dictionary.init(arena.allocator()), .code_alloc = arena, .curr_word = null, .stdout = std.io.getStdOut().writer().any() };
-    }
-    pub fn initialize_words(vm: *VM) !void {
-        try vm.run_dict.put("hello_world", &[_]Pointer{.{ .native_code = &hello_world }});
-    }
-    pub fn execute(vm: *VM, word: WordPtr) void {
-        vm.curr_word = word;
-        word[0].native_code(vm);
+        return .{ .run_dict = Dictionary.init(arena.allocator()), .code_alloc = arena };
     }
     pub fn deinit(vm: VM) void {
         defer vm.code_alloc.deinit();
+    }
+    pub fn initialize_words(vm: *VM) !void {
+        try vm.run_dict.put("hello_world", &[_]Pointer{.{ .native_code = &hello_world }});
     }
 
     pub fn compile_expr(vm: *VM, input: *[]const u8) !WordPtr {
@@ -95,10 +109,11 @@ const VM = struct {
 
         var output = std.ArrayList(u8).init(std.testing.allocator);
         defer output.deinit();
-        vm.stdout = output.writer().any();
 
         const code = [_]Pointer{ .{ .native_code = &docol }, .{ .threaded_code = vm.run_dict.get("hello_world").? } };
-        vm.execute(&code);
+        var state = State.new(&vm, &code);
+        state.stdout = output.writer().any();
+        state.execute();
 
         try std.testing.expectEqualStrings("Hello world\n", output.items);
     }
