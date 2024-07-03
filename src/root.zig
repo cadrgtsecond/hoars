@@ -50,11 +50,16 @@ fn hello_world(state: *State) void {
     };
 }
 fn push_int(state: *State) void {
-    if (state.curr_word == state.vm.run_dict.get("push_int").?) {
-        @panic("Some kind of error");
-    }
-    state.stack.appendAssumeCapacity(state.curr_word[1].number);
+    state.stack.appendAssumeCapacity(state.curr_word[1].integer);
     state.curr_word += 1;
+}
+/// A string consists of a <len> value on the stack followed by a pointer, forth style
+fn push_str(state: *State) void {
+    // Length
+    state.stack.appendAssumeCapacity(state.curr_word[1].integer);
+    // Pointer
+    state.stack.appendAssumeCapacity(state.curr_word[2].integer);
+    state.curr_word += 2;
 }
 
 // ///////////////////////////////
@@ -65,7 +70,7 @@ const CodePtr = *const fn (*State) void;
 const Pointer = union {
     native_code: CodePtr,
     threaded_code: WordPtr,
-    number: usize,
+    integer: usize,
 };
 const WordPtr = [*]const Pointer;
 
@@ -115,6 +120,7 @@ const VM = struct {
     pub fn initialize_words(vm: *VM) !void {
         const alloc = vm.code_alloc.allocator();
         try vm.run_dict.put(alloc, "push_int", &[_]Pointer{.{ .native_code = &push_int }});
+        try vm.run_dict.put(alloc, "push_str", &[_]Pointer{.{ .native_code = &push_str }});
         try vm.run_dict.put(alloc, "hello_world", &[_]Pointer{.{ .native_code = &hello_world }});
     }
 
@@ -127,9 +133,13 @@ const VM = struct {
             .word => {},
             .number => |n| {
                 try compile_target.append(.{ .threaded_code = vm.run_dict.get("push_int").? });
-                try compile_target.append(.{ .number = @bitCast(n) });
+                try compile_target.append(.{ .integer = @bitCast(n) });
             },
-            .string => {},
+            .string => |s| {
+                try compile_target.append(.{ .threaded_code = vm.run_dict.get("push_str").? });
+                try compile_target.append(.{ .integer = @bitCast(s.len) });
+                try compile_target.append(.{ .integer = @intFromPtr(s.ptr) });
+            },
         }
         return compile_target.items.ptr;
     }
@@ -150,17 +160,7 @@ const VM = struct {
 
         try std.testing.expectEqualStrings("Hello world\n", output.items);
     }
-    test "Pushing numbers" {
-        var vm = VM.init(std.heap.page_allocator);
-        defer vm.deinit();
-        try vm.initialize_words();
-        const code = [_]Pointer{ .{ .native_code = &docol }, .{ .threaded_code = vm.run_dict.get("push_int").? }, .{ .number = 10 } };
-
-        var state = try State.init_execute(&vm, &.{.{ .threaded_code = &code }}, std.testing.allocator);
-        defer state.deinit();
-        try std.testing.expectEqual(10, state.stack.pop());
-    }
-    test "Basic compilation" {
+    test "Compiling numbers" {
         var vm = VM.init(std.heap.page_allocator);
         defer vm.deinit();
         try vm.initialize_words();
@@ -170,6 +170,19 @@ const VM = struct {
         var state = try State.init_execute(&vm, &.{.{ .threaded_code = code }}, std.testing.allocator);
         defer state.deinit();
         try std.testing.expectEqual(20, state.stack.pop());
+    }
+    test "Compiling strings" {
+        var vm = VM.init(std.heap.page_allocator);
+        defer vm.deinit();
+        try vm.initialize_words();
+        var input: []const u8 = "'Hello World'";
+        const code = try vm.compile_expr(&input);
+
+        var state = try State.init_execute(&vm, &.{.{ .threaded_code = code }}, std.testing.allocator);
+        defer state.deinit();
+        const ptr: [*]const u8 = @ptrFromInt(state.stack.pop());
+        const len = state.stack.pop();
+        try std.testing.expectEqualStrings("Hello World", ptr[0..len]);
     }
 };
 
