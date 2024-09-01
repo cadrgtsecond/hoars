@@ -39,12 +39,32 @@
   (format t "~a------------~a" self *stack*)
   (call-in (cdr self)))
 
+(defun call-in (in)
+  (and in (funcall (caar in) in)))
+
+(defun compile-expr ()
+  "Compiles an expression from the input"
+  (let ((token (gethash (read-token) *-compiler-*)))
+    (and token (call-in (list (or token (error "Unknown word")))))))
+(defun wcompile-expr (self)
+  (let ((*stack* (list* (compile-expr) *stack*)))
+    (call-in (cdr self))))
+
 (defword "quote" *-compiler-* (self)
   (list '(push-val) (read-token)))
 (defword "string-quote" *-compiler-* (self)
   (print *input*))
 (defword "trace" *-compiler-* (self)
   (list '(debug-log)))
+(defword "compile-expr" *-compiler-* (self)
+  (list '(wcompile-expr)))
+
+(defun print-value (self)
+  (format t "=> ~a" (car *stack*))
+  (let ((*stack* (cdr *stack*)))
+    (call-in (cdr self))))
+(defword "print" *-compiler-* (self)
+  `(,@(compile-expr) (print-value)))
 
 (defun rlet (self)
   (setf (gethash (cadr self) *-values-*) (car *stack*))
@@ -61,13 +81,9 @@
         `((rpush-var) ,name))
       `(,@(compile-expr) (rlet) ,name ,@(compile-expr)))))
 
-(defun call-in (in)
-  (and in (funcall (caar in) in)))
-
-(defun compile-expr ()
-  "Compiles an expression from the input"
-  (call-in (list (gethash (read-token) *-compiler-*))))
-
 #+nil
-(let ((*input* "let x = quote 20 trace"))
+(let ((*input* "let x = compile-expr print x"))
   (compile-expr))
+#+nil
+(let ((*input* "let x = compile-expr"))
+  (call-in *))
