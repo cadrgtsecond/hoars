@@ -59,6 +59,10 @@
 (defword "compile-expr" *-compiler-* (self)
   (list '(wcompile-expr)))
 
+(defun rpush-var (self)
+  (push (gethash (cadr self) *-values-*) *stack*)
+  (call-in (cddr self)))
+
 (defun print-value (self)
   (format t "=> ~a" (car *stack*))
   (let ((*stack* (cdr *stack*)))
@@ -70,9 +74,6 @@
   (setf (gethash (cadr self) *-values-*) (car *stack*))
   (let ((*stack* (cdr *stack*)))
     (call-in (cddr self))))
-(defun rpush-var (self)
-  (push (gethash (cadr self) *-values-*) *stack*)
-  (call-in (cddr self)))
 (defword "let" *-compiler-* (self)
   (let ((name (read-word))
         (sep (read-token)))
@@ -81,9 +82,21 @@
         `((rpush-var) ,name))
       `(,@(compile-expr) (rlet) ,name ,@(compile-expr)))))
 
+(defun docode (self)
+  (call-in (cdar self)))
+(defword "word" *-compiler-* (self)
+  (let ((name (read-word))
+        (code (loop until (string= (peek-token) "end")
+                    appending (compile-expr))))
+    (setf (gethash name *-compiler-*) `(docode ,@code))
+    nil))
+
 #+nil
 (let ((*input* "let x = compile-expr print x"))
   (compile-expr))
 #+nil
-(let ((*input* "let x = compile-expr"))
-  (call-in *))
+(let ((*input* "word hello let x = compile-expr print quote word print x end "))
+  (compile-expr))
+#+nil
+(let ((*input* "print x"))
+  (call-in (list (gethash "hello" *-compiler-*))))
