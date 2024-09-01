@@ -6,7 +6,7 @@
 
 (defun read-word ()
   "Reads a token from the input, moving it forward. Returns NIL if no more output"
-  (destructuring-bind (&optional res rest) (str:split " " *input* :limit 2 :omit-nulls t)
+  (destructuring-bind (&optional res rest) (str:split "\\s+" *input* :limit 2 :omit-nulls t :regex t)
     (setf *input* rest)
     res))
 (defun read-string-quote ()
@@ -32,7 +32,6 @@
 
 (defparameter *stack* '())
 (defun push-val (self)
-  (format t "Pushing ~a~%" (cadr self))
   (push (cadr self) *stack*)
   (call-in (cddr self)))
 (defun debug-log (self)
@@ -52,6 +51,8 @@
 
 (defword "quote" *-compiler-* (self)
   (list '(push-val) (read-token)))
+(defword "undefined" *-compiler-* (self)
+  (list '(push-val) nil))
 (defword "string-quote" *-compiler-* (self)
   (print *input*))
 (defword "trace" *-compiler-* (self)
@@ -64,9 +65,8 @@
   (call-in (cddr self)))
 
 (defun print-value (self)
-  (format t "=> ~a" (car *stack*))
-  (let ((*stack* (cdr *stack*)))
-    (call-in (cdr self))))
+  (format t "=> ~a~%" (car *stack*))
+  (call-in (cdr self)))
 (defword "print" *-compiler-* (self)
   `(,@(compile-expr) (print-value)))
 
@@ -87,19 +87,63 @@
 (defword "word" *-compiler-* (self)
   (let ((name (read-word))
         (code (loop until (string= (peek-token) "end")
-                    appending (compile-expr))))
+                    appending (compile-expr)
+                    finally (read-token))))
     (setf (gethash name *-compiler-*) `(docode ,@code))
     (compile-expr)))
+
+(defun jump (self)
+  "Unconditionally jumps to (cadr self)"
+  (call-in (cadr self)))
+(defun cjump (self)
+  "Checks to condition on top of the stack and jumps to (cadr self) if it is true"
+  (let ((*stack* (cdr *stack*))
+        (condition (car *stack*)))
+    (if condition
+        (call-in (cadr self))
+        (call-in (cddr self)))))
+(defun cnjump (self)
+  "Checks to condition on top of the stack and jumps to (cadr self) if it is false"
+  (let ((*stack* (cdr *stack*))
+        (condition (car *stack*)))
+    (if condition
+        (call-in (cddr self))
+        (call-in (cadr self)))))
+
+(let ((*input* "let true = undefined
+                let false = undefined"))
+  (call-in (compile-expr)))
+(setf (gethash "true" *-values-*) t)
+(setf (gethash "false" *-values-*) nil)
+
+(defword "if" *-compiler-* (self)
+  (let ((condition (compile-expr))
+        (then-body (loop until (or (string= (peek-token) "end") (string= (peek-token) "else"))
+                         appending (compile-expr))))
+    (if (string= (read-token) "end")
+      (let ((rest (compile-expr)))
+        `(,@condition (cnjump) ,rest ,@then-body ,@rest))
+      (let ((else-body (loop until (string= (peek-token) "end")
+                             appending (compile-expr)
+                             finally (read-token)))
+            (rest (compile-expr)))
+        `(,@condition (cnjump) (,@else-body ,@rest) ,@then-body ,@rest)))))
 
 #+nil
 (let ((*input* "let x = compile-expr print x"))
   (compile-expr))
 #+nil
-(let ((*input* "word hello let x = compile-expr print quote word print x end "))
+(let ((*input* "word hello let x = compile-expr print quote word print x end print quote world"))
   (compile-expr))
 #+nil
 (let ((*input* "print x"))
   (call-in (list (gethash "hello" *-compiler-*))))
 #+nil
 (let ((*input* "hello est"))
+  (compile-expr))
+#+nil
+(let ((*input* "if true print quote hello else print quote world end print quote final"))
+  (compile-expr))
+#+nil
+(let ((*input* "if false print quote hello else print quote world end print quote final"))
   (compile-expr))
