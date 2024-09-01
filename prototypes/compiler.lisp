@@ -44,8 +44,8 @@
 
 (defun compile-expr ()
   "Compiles an expression from the input"
-  (let ((token (gethash (read-token) *-compiler-*)))
-    (and token (call-in (list (or token (error "Unknown word")))))))
+  (let ((token (read-token)))
+    (and token (call-in (list (or (gethash token *-compiler-*) (error "Unknown word")))))))
 (defun wcompile-expr (self)
   (let ((*stack* (list* (compile-expr) *stack*)))
     (call-in (cdr self))))
@@ -89,7 +89,7 @@
         (code (loop until (string= (peek-token) "end")
                     appending (compile-expr))))
     (setf (gethash name *-compiler-*) `(docode ,@code))
-    nil))
+    (compile-expr)))
 
 #+nil
 (let ((*input* "let x = compile-expr print x"))
@@ -100,3 +100,6 @@
 #+nil
 (let ((*input* "print x"))
   (call-in (list (gethash "hello" *-compiler-*))))
+#+nil
+(let ((*input* "hello est"))
+  (compile-expr))
