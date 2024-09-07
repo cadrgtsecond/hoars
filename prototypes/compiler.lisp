@@ -37,6 +37,14 @@
 (defun debug-log (self)
   (format t "~a------------~a" self *stack*)
   (call-in (cdr self)))
+(defmacro with-push (values &body body)
+  "Pushes VALUES onto the stack in the reverse order specified"
+  `(let ((*stack* (list* ,@values *stack*)))
+     ,@body))
+(defmacro with-pop (vars &body body)
+  "Pops VALUES from the stack in the order specified"
+  `(destructuring-bind (,@vars &rest *stack*) *stack*
+     ,@body))
 
 (defun call-in (in)
   (and in (funcall (caar in) in)))
@@ -71,8 +79,8 @@
   `(,@(compile-expr) (print-value)))
 
 (defun rlet (self)
-  (setf (gethash (cadr self) *-values-*) (car *stack*))
-  (let ((*stack* (cdr *stack*)))
+  (with-pop (val)
+    (setf (gethash (cadr self) *-values-*) val)
     (call-in (cddr self))))
 (defword "let" *-compiler-* (self)
   (let ((name (read-word))
@@ -97,15 +105,13 @@
   (call-in (cadr self)))
 (defun cjump (self)
   "Checks to condition on top of the stack and jumps to (cadr self) if it is true"
-  (let ((*stack* (cdr *stack*))
-        (condition (car *stack*)))
+  (with-pop (condition)
     (if condition
         (call-in (cadr self))
         (call-in (cddr self)))))
 (defun cnjump (self)
   "Checks to condition on top of the stack and jumps to (cadr self) if it is false"
-  (let ((*stack* (cdr *stack*))
-        (condition (car *stack*)))
+  (with-pop (condition)
     (if condition
         (call-in (cddr self))
         (call-in (cadr self)))))
@@ -139,11 +145,17 @@
 (let ((*input* "print x"))
   (call-in (list (gethash "hello" *-compiler-*))))
 #+nil
-(let ((*input* "hello est"))
+(let ((*input* "hello true"))
   (compile-expr))
 #+nil
 (let ((*input* "if true print quote hello else print quote world end print quote final"))
   (compile-expr))
 #+nil
 (let ((*input* "if false print quote hello else print quote world end print quote final"))
+  (compile-expr))
+#+nil
+(let ((*input* "if true print quote hello end print quote final"))
+  (compile-expr))
+#+nil
+(let ((*input* "if false print quote hello end print quote final"))
   (compile-expr))
