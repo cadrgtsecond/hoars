@@ -11,7 +11,7 @@
     res))
 (defun read-string-quote ()
   "Reads a string literal from the input"
-  (when (equal (str:s-first *input*) "\"")
+  (when (or (equal (str:s-first *input*) "\"") (equal (str:s-first *input*) "'"))
     "string-quote"))
 (defun read-token ()
   (or (read-string-quote) (read-word)))
@@ -135,6 +135,13 @@
             (rest (compile-expr)))
         `(,@condition (cnjump) (,@else-body ,@rest) ,@then-body ,@rest)))))
 
+;;; String
+(defword "string-quote" *-compiler-* (self)
+  (destructuring-bind (val &optional rest)
+      (str:split "['\"]" (subseq *input* 1) :omit-nulls t :limit 2 :regex t)
+    (setf *input* (str:trim-left rest))
+    (list '(push-val) val)))
+
 #+nil
 (let ((*input* "let x = compile-expr print x"))
   (compile-expr))
@@ -148,14 +155,5 @@
 (let ((*input* "hello true"))
   (compile-expr))
 #+nil
-(let ((*input* "if true print quote hello else print quote world end print quote final"))
-  (compile-expr))
-#+nil
-(let ((*input* "if false print quote hello else print quote world end print quote final"))
-  (compile-expr))
-#+nil
-(let ((*input* "if true print quote hello end print quote final"))
-  (compile-expr))
-#+nil
-(let ((*input* "if false print quote hello end print quote final"))
+(let ((*input* "let x = 'hello world' print x"))
   (compile-expr))
