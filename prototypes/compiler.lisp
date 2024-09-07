@@ -157,3 +157,7 @@
 #+nil
 (let ((*input* "let x = 'hello world' print x"))
   (compile-expr))
+(defun repl ()
+  (loop
+    (let ((*input* (read-line)))
+      (call-in (compile-expr)))))
