@@ -1,6 +1,11 @@
 ;;;; Prototype compiler
 
 (ql:quickload :str)
+(ql:quickload :alexandria)
+(defpackage #:hoars
+  (:use #:cl)
+  (:local-nicknames (#:a #:alexandria)))
+(in-package #:hoars)
 
 (defparameter *input* "")
 
@@ -21,10 +26,11 @@
   (let ((*input* *input*))
     (read-token)))
 
-(defparameter *-compiler-* (make-hash-table :test #'equal))
 ;;(defparameter *-variables-* (make-hash-table :test #'equal))
 (defparameter *-values-* (make-hash-table :test #'equal))
-(define-symbol-macro *current-word* (gethash "current-word" *-values-*))
+
+(define-symbol-macro *-compiler-* (gethash "-compiler-" *-values-*))
+(setf *-compiler-* (make-hash-table :test #'equal))
 
 (defmacro defword (name dict arglist &body code)
   `(setf (gethash ,name ,dict)
@@ -49,12 +55,15 @@
 (defun call-in (in)
   (and in (funcall (caar in) in)))
 
+(defun compile-compiler (word)
+  "compiles a *-COMPILER-* word"
+  (call-in (list (or (gethash word *-compiler-*) (error "Unknown word")))))
 (defun compile-expr ()
   "Compiles an expression from the input"
   (let ((token (read-token)))
-    (and token (call-in (list (or (gethash token *-compiler-*) (error "Unknown word")))))))
+    (and token (compile-compiler token))))
 (defun wcompile-expr (self)
-  (let ((*stack* (list* (compile-expr) *stack*)))
+  (with-push ((compile-expr))
     (call-in (cdr self))))
 
 (defword "quote" *-compiler-* (self)
@@ -69,8 +78,8 @@
   (list '(wcompile-expr)))
 
 (defun rpush-var (self)
-  (push (gethash (cadr self) *-values-*) *stack*)
-  (call-in (cddr self)))
+  (with-push ((gethash (cadr self) *-values-*))
+    (call-in (cddr self))))
 
 (defun print-value (self)
   (format t "=> ~a~%" (car *stack*))
@@ -89,6 +98,11 @@
       (defword name *-compiler-* (self)
         `((rpush-var) ,name))
       `(,@(compile-expr) (rlet) ,name ,@(compile-expr)))))
+
+;;;; Now that we have a way to define variables, let us define `-compiler-` properly as a variable
+(let ((*input* "let -compiler- = undefined"))
+  ;; Since we do not execute the expression, the value of -compiler- is never changed
+  (compile-expr))
 
 (defun docode (self)
   (call-in (cdar self)))
@@ -142,15 +156,40 @@
     (setf *input* (str:trim-left rest))
     (list '(push-val) val)))
 
+(defun wget (self)
+  (with-pop (object index)
+    ;; TODO: Implement other types of objects
+    (with-push ((gethash index object))
+      (call-in (cdr self)))))
+;; get object index
+(defword "get" *-compiler-* (self)
+  `(,@(compile-expr) ,@(compile-expr) (wget)))
+
+(defun wmake-table (self)
+  (with-push ((make-hash-table :test #'equal))
+    (call-in (cdr self))))
+(defword "make-table" *-compiler-* (self)
+  `((wmake-table)))
+
+#+nil
+(let ((*input* "print get '-compiler-' -compiler-"))
+  (compile-expr))
+
 #+nil
 (let ((*input* "let x = compile-expr print x"))
-  (compile-expr))
+  (defun compile-compiler (word)
+    "compiles a *-COMPILER-* word"
+   compile-expr))
 #+nil
-(let ((*input* "word hello let x = compile-expr print quote word print x end print quote world"))
+(let ((*input* "let y = make-table print y"))
   (compile-expr))
 #+nil
 (let ((*input* "print x"))
-  (call-in (list (gethash "hello" *-compiler-*))))
+  (call-in (list (gethash  )
+  (compile-expr))
+#+nil
+(let ((*input* "word hello let x = compile-expr print quote word print x end print quote world"))
+  ("hello" *-compiler-*))))
 #+nil
 (let ((*input* "hello true"))
   (compile-expr))
